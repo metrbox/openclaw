@@ -144,19 +144,54 @@ check_proxmox() {
     log_success "Running on Proxmox VE"
 }
 
-# Get available storage pools that support container rootdir
+# Get available storage pools that support specific content type
 get_available_storage() {
-    local storage_type="$1"  # "rootdir" for container storage, "vztmpl" for templates
-    pvesm status 2>/dev/null | awk -v type="$storage_type" '
-        NR > 1 && $2 == "active" {
-            # Get storage content types
-            cmd = "pvesm status --storage " $1 " 2>/dev/null | grep -o \"content.*\" | cut -d: -f2"
-            cmd | getline content
-            close(cmd)
-            if (type == "rootdir" && (content ~ /rootdir/ || content ~ /images/)) print $1
-            if (type == "vztmpl" && content ~ /vztmpl/) print $1
-        }
-    '
+    local storage_type="$1"  # "rootdir" or "vztmpl"
+    
+    # We need to parse /etc/pve/storage.cfg to see what content types each storage supports
+    # Format is:
+    # type: name
+    #       content types,list
+    
+    local in_storage_block=0
+    local current_storage=""
+    local current_enabled=1 # Assume enabled unless disabled
+    
+    # Get list of active storages from pvesm status to cross-check
+    local active_storages
+    active_storages=$(pvesm status 2>/dev/null | awk 'NR>1 && $2=="active" {print $1}')
+    
+    while IFS= read -r line; do
+        # Clean line
+        line=$(echo "$line" | sed 's/^[ \t]*//')
+        
+        # New block starts with "type: name"
+        if [[ "$line" =~ ^[a-z]+: ]]; then
+            # Parse previous block if we had one (simplified logic: we check inline)
+            current_storage=$(echo "$line" | awk '{print $2}')
+            current_enabled=1
+        fi
+        
+        # Check disable flag
+        if [[ "$line" =~ ^disable: ]]; then
+            current_enabled=0
+        fi
+        
+        # Check content line
+        if [[ "$line" =~ ^content ]]; then
+            local content_types
+            content_types=$(echo "$line" | cut -d' ' -f2-)
+            
+            # Check if storage is active
+            if echo "$active_storages" | grep -q "^${current_storage}$" && [[ $current_enabled -eq 1 ]]; then
+               if [[ "$storage_type" == "rootdir" && "$content_types" =~ rootdir ]]; then
+                   echo "$current_storage"
+               elif [[ "$storage_type" == "vztmpl" && "$content_types" =~ vztmpl ]]; then
+                   echo "$current_storage"
+               fi
+            fi
+        fi
+    done < /etc/pve/storage.cfg
 }
 
 # Interactive storage selection
@@ -165,14 +200,23 @@ select_storage() {
     local prompt="$2"
     local var_name="$3"
 
-    # Get list of available storage
+    # Get list of available storage candidates
     local storages=()
     while IFS= read -r line; do
         [[ -n "$line" ]] && storages+=("$line")
-    done < <(pvesm status 2>/dev/null | awk 'NR > 1 && $2 == "active" { print $1 }')
+    done < <(get_available_storage "$storage_type")
+    
+    # Fallback: if no specific storage found, list ALL active storages
+    if [[ ${#storages[@]} -eq 0 ]]; then
+        log_warn "No storage found specifically configured for '$storage_type'."
+        log_warn "Showing all active storage pools (some might not work):"
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && storages+=("$line")
+        done < <(pvesm status 2>/dev/null | awk 'NR > 1 && $2 == "active" { print $1 }')
+    fi
 
     if [[ ${#storages[@]} -eq 0 ]]; then
-        log_error "No active storage found"
+        log_error "No active storage found on this system."
         exit 1
     fi
 
