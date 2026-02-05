@@ -158,8 +158,9 @@ get_available_storage() {
     local current_enabled=1 # Assume enabled unless disabled
     
     # Get list of active storages from pvesm status to cross-check
+    # pvesm status format: Name Type Status ...
     local active_storages
-    active_storages=$(pvesm status 2>/dev/null | awk 'NR>1 && $2=="active" {print $1}')
+    active_storages=$(pvesm status 2>/dev/null | awk 'NR>1 && $3=="active" {print $1}')
     
     while IFS= read -r line; do
         # Clean line
@@ -212,11 +213,13 @@ select_storage() {
         log_warn "Showing all active storage pools (some might not work):"
         while IFS= read -r line; do
             [[ -n "$line" ]] && storages+=("$line")
-        done < <(pvesm status 2>/dev/null | awk 'NR > 1 && $2 == "active" { print $1 }')
+        done < <(pvesm status 2>/dev/null | awk 'NR > 1 && $3 == "active" { print $1 }')
     fi
 
     if [[ ${#storages[@]} -eq 0 ]]; then
         log_error "No active storage found on this system."
+        log_error "Debug: Output of 'pvesm status':"
+        pvesm status 2>/dev/null || echo "Command failed"
         exit 1
     fi
 
