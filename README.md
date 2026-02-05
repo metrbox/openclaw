@@ -1,0 +1,137 @@
+# Openclaw Deployment Template
+
+This repo packages **Openclaw** (AI coding assistant) with a web-based **/setup** wizard for easy deployment. Originally designed for Railway, now also supports **LXC containers** (Proxmox) and Docker.
+
+## What you get
+
+- **Openclaw Gateway + Control UI** (served at `/` and `/openclaw`)
+- A friendly **Setup Wizard** at `/setup` (protected by a password)
+- Persistent state via **Railway Volume** (so config/credentials/memory survive redeploys)
+- One-click **Export backup** (so users can migrate off Railway later)
+
+## How it works (high level)
+
+- The container runs a wrapper web server.
+- The wrapper protects `/setup` with `SETUP_PASSWORD`.
+- During setup, the wrapper runs `openclaw onboard --non-interactive ...` inside the container, writes state to the volume, and then starts the gateway.
+- After setup, **`/` is Openclaw**. The wrapper reverse-proxies all traffic (including WebSockets) to the local gateway process.
+
+## Railway deploy instructions
+
+Create a new template in Railway with these steps:
+
+1. **Create a new template** from this GitHub repo
+2. **Add a Volume** mounted at `/data`
+3. **Set one environment variable**:
+   - `SETUP_PASSWORD` — Your password to access the setup wizard and authenticate with the gateway
+4. **Enable Public Networking** (HTTP) — Railway will assign a domain like `https://your-app.up.railway.app`
+5. **Deploy**
+
+That's it! Just one variable to set.
+
+## Getting started
+
+After deployment:
+
+1. Visit `https://<your-app>.up.railway.app/setup`
+2. Login with your `SETUP_PASSWORD`
+3. Select your AI provider and enter your API key
+4. Optionally configure messaging channels (Telegram, Discord, Slack)
+5. Click "Run Setup" and you're done!
+
+The setup wizard supports these AI providers:
+- **Anthropic** (Claude) - Recommended
+- **OpenAI** (GPT models)
+- **Google** (Gemini)
+- **OpenRouter**
+- **Atlas Cloud**
+- **Vercel AI Gateway**
+- **Moonshot AI**
+- **Z.AI (GLM 4.7)**
+- **MiniMax**
+- **Qwen**
+- **Synthetic**
+- **OpenCode Zen**
+
+## Getting chat tokens (so you don’t have to scramble)
+
+### Telegram bot token
+
+1. Open Telegram and message **@BotFather**
+2. Run `/newbot` and follow the prompts
+3. BotFather will give you a token that looks like: `123456789:AA...`
+4. Paste that token into `/setup`
+
+### Discord bot token
+
+1. Go to the Discord Developer Portal: https://discord.com/developers/applications
+2. **New Application** → pick a name
+3. Open the **Bot** tab → **Add Bot**
+4. Copy the **Bot Token** and paste it into `/setup`
+5. Invite the bot to your server (OAuth2 URL Generator → scopes: `bot`, `applications.commands`; then choose permissions)
+
+## Local testing
+
+```bash
+# Build the container
+docker build -t openclaw-railway-template .
+
+# Run locally (only need SETUP_PASSWORD!)
+docker run --rm -p 8080:8080 \
+  -e PORT=8080 \
+  -e SETUP_PASSWORD=test \
+  -v $(pwd)/.tmpdata:/data \
+  openclaw-railway-template
+
+# Open http://localhost:8080/setup
+# Password: test
+```
+
+## LXC Deployment (Proxmox)
+
+For self-hosted deployments on Proxmox LXC containers (Debian 12):
+
+### Automated Setup
+
+```bash
+# SSH into your LXC container, then:
+curl -fsSL https://raw.githubusercontent.com/metrbox/openclaw/main/scripts/lxc-setup.sh -o lxc-setup.sh
+chmod +x lxc-setup.sh
+
+# Set your password and run
+export SETUP_PASSWORD="your-secure-password"
+./lxc-setup.sh
+```
+
+The script will:
+- Install Node.js 22, pnpm, Bun, and Homebrew
+- Build Openclaw from source
+- Install the wrapper application
+- Create a systemd service
+- Start everything and verify
+
+### LXC Requirements
+
+- **OS:** Debian 12 (Bookworm)
+- **RAM:** 4GB minimum (8GB recommended)
+- **Disk:** 20GB minimum
+- **CPU:** 2 cores minimum
+
+### Manual Setup
+
+See [scripts/lxc-setup.sh](scripts/lxc-setup.sh) for the full installation steps, or check the detailed guide in our [deployment plan](docs/lxc-deployment.md).
+
+### Useful Commands
+
+```bash
+# Service management
+systemctl status openclaw
+systemctl restart openclaw
+journalctl -u openclaw -f
+
+# Uninstall (keeps data)
+./scripts/lxc-uninstall.sh --keep-data
+
+# Uninstall (removes everything)
+./scripts/lxc-uninstall.sh
+```
