@@ -428,6 +428,11 @@ start_container() {
 run_setup_in_container() {
     log_step "Running Openclaw setup inside container..."
 
+    # Ensure curl is installed (Debian 12 template might not have it)
+    log_info "Installing prerequisites..."
+    pct exec "$CTID" -- apt-get update
+    pct exec "$CTID" -- apt-get install -y curl ca-certificates
+
     # Download and run the setup script
     pct exec "$CTID" -- bash -c "
         export SETUP_PASSWORD='${SETUP_PASSWORD}'
